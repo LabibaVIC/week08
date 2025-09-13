@@ -1,4 +1,3 @@
-# week08/.github/workflows/frontend_cd.yml
 name: CD - Deploy Frontend to AKS
 
 on:
@@ -21,13 +20,6 @@ on:
         required: true
         default: 'sit722week08'
 
-  workflow_call:
-    inputs:
-      product_api_ip:    { required: true, type: string }
-      order_api_ip:      { required: true, type: string }
-      aks_cluster_name:  { required: true, type: string }
-      aks_resource_group:{ required: true, type: string }
-
 jobs:
   deploy_frontend:
     runs-on: ubuntu-latest
@@ -42,7 +34,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # --- ACR login (uses ACR_NAME secret) ---
       - name: Validate ACR_NAME secret is present
         run: |
           test -n "${{ secrets.ACR_NAME }}" || (echo "ACR_NAME secret is missing"; exit 1)
@@ -55,21 +46,17 @@ jobs:
       - name: Login to Azure Container Registry
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
-      # --- Optional: inject IPs (safe if placeholders already replaced; sed will no-op) ---
-      - name: Inject Backend IPs into Frontend main.js
+      - name: Inject Backend IPs into Frontend main.js (no-op if already set)
         run: |
-          echo "Injecting IPs into frontend/main.js (no-op if already set)"
           sed -i "s|_PRODUCT_API_URL_|${{ inputs.product_api_ip }}|g" frontend/main.js || true
           sed -i "s|_ORDER_API_URL_|${{ inputs.order_api_ip }}|g"   frontend/main.js || true
-          echo "--- main.js (head) ---"; head -n 15 frontend/main.js; echo "---------------------"
+          head -n 12 frontend/main.js
 
-      # Build & push the frontend image to your ACR
       - name: Build and Push Frontend Image
         run: |
           docker build -t $ACR_LOGIN_SERVER/frontend:latest ./frontend
           docker push  $ACR_LOGIN_SERVER/frontend:latest
 
-      # Get AKS credentials
       - name: Set Kubernetes context (get AKS credentials)
         run: |
           az aks get-credentials \
@@ -77,17 +64,13 @@ jobs:
             --name "${{ inputs.aks_cluster_name }}" \
             --overwrite-existing
 
-      # Deploy frontend (ensure the manifest uses your ACR login server)
       - name: Deploy Frontend to AKS
         run: |
           echo "Deploying frontend to AKS cluster: ${{ inputs.aks_cluster_name }}"
           cd k8s/
-          # If your manifest uses a placeholder for image, update it prior to apply.
-          # Otherwise ensure it already points to: $ACR_LOGIN_SERVER/frontend:latest
           kubectl apply -f frontend.yaml
-          echo "Current services:"; kubectl get svc
+          kubectl get svc
 
       - name: Logout from Azure
         if: always()
         run: az logout || true
-
